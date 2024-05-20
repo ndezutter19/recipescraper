@@ -17,19 +17,47 @@ recipe_cards = soup.find_all('a', class_='mntl-card-list-items')
 
 recipes = []
 
+def get_ingredients(link: str):
+    htmlGet = requests.get(link)
+    htmlText = htmlGet.text.replace('\n', ' ')
+    soup = BeautifulSoup(htmlText, 'html.parser')
+    soupResults = soup.findAll('ul', class_="mntl-structured-ingredients__list")
+    ingred_as_text = ''
+    
+    for child in soupResults:
+        ingredStrings = child.find_all('li')
+        for item in ingredStrings:
+            ingred_as_text += item.text + '\n'
+            
+    soupResults = soup.findAll('div', class_="comp recipe__steps-content mntl-sc-page mntl-block")
+    steps_as_text = ''
+    
+    count = 1
+    for child in soupResults:
+        stepsStrings = child.find_all('li')
+        for item in stepsStrings:
+            steps_as_text += f'Step {count}: {item.text} \n'
+            count += 1
+    
+    return ingred_as_text, steps_as_text
+
+
+
+
 # Function to get the overall star rating from a recipe page
 def get_star_rating(card):
     link = card['href']
+    ingredients, steps = get_ingredients(link)
     response = requests.get(link)
     response.raise_for_status()
     soup = BeautifulSoup(response.content, 'html.parser')
     rating_element = soup.find('div', id='mntl-recipe-review-bar__rating_1-0')
     if rating_element:
         try:
-            return link, float(rating_element.get_text(strip=True))
+            return link, float(rating_element.get_text(strip=True)), ingredients, steps
         except ValueError:
-            return link, 0.0
-    return link, 0.0
+            return link, 0.0, ingredients, steps
+    return link, 0.0, ingredients, steps
 
 # Function to extract recipe details from a card
 def extract_recipe_details(card):
@@ -58,10 +86,11 @@ def main():
 
         for future in as_completed(future_to_recipe):
             card = future_to_recipe[future]
-            link, star_rating = future.result()
+            link, star_rating, ingredients, steps = future.result()
+            
             for recipe in recipe_details:
                 if recipe[2] == link:
-                    recipes.append((recipe[0], recipe[1], star_rating, link))
+                    recipes.append((recipe[0], recipe[1], star_rating, link, ingredients))
 
     # Calculate the average item's rating (C)
     if recipes:
@@ -80,8 +109,8 @@ def main():
     sorted_recipes = sorted(recipes, key=lambda x: calculate_weighted_rating(x[2], x[1], C, m), reverse=True)
 
     # Print the sorted recipes
-    for title, rating_count, star_rating, link in sorted_recipes:
-        print(f"Recipe: {title} - Ratings: {rating_count} - Star Rating: {star_rating}")
+    for title, rating_count, star_rating, link, ingredients in sorted_recipes:
+        print(f"Recipe: {title} - Ratings: {rating_count} - Star Rating: {star_rating} \nIngredients:\n{ingredients} \nSteps:\n{steps}")
     
 
 if __name__ == "__main__":
