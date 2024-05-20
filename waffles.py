@@ -2,62 +2,18 @@ import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# URL of the Allrecipes "Waffles" category page
-url = 'https://www.allrecipes.com/recipes/1316/breakfast-and-brunch/waffles/'
-
-# Send a GET request to the URL
-response = requests.get(url)
-response.raise_for_status()  # Check that the request was successful
-
-# Parse the HTML content using Beautiful Soup
-soup = BeautifulSoup(response.content, 'html.parser')
-
-# Find all recipe cards
-recipe_cards = soup.find_all('a', class_='mntl-card-list-items')
-
-recipes = []
-
-def get_ingredients(link: str):
-    htmlGet = requests.get(link)
-    htmlText = htmlGet.text.replace('\n', ' ')
-    soup = BeautifulSoup(htmlText, 'html.parser')
-    soupResults = soup.findAll('ul', class_="mntl-structured-ingredients__list")
-    ingred_as_text = ''
-    
-    for child in soupResults:
-        ingredStrings = child.find_all('li')
-        for item in ingredStrings:
-            ingred_as_text += item.text + '\n'
-            
-    soupResults = soup.findAll('div', class_="comp recipe__steps-content mntl-sc-page mntl-block")
-    steps_as_text = ''
-    
-    count = 1
-    for child in soupResults:
-        stepsStrings = child.find_all('li')
-        for item in stepsStrings:
-            steps_as_text += f'Step {count}: {item.text} \n'
-            count += 1
-    
-    return ingred_as_text, steps_as_text
-
-
-
-
 # Function to get the overall star rating from a recipe page
-def get_star_rating(card):
-    link = card['href']
-    ingredients, steps = get_ingredients(link)
+def get_star_rating(link):
     response = requests.get(link)
     response.raise_for_status()
     soup = BeautifulSoup(response.content, 'html.parser')
     rating_element = soup.find('div', id='mntl-recipe-review-bar__rating_1-0')
     if rating_element:
         try:
-            return link, float(rating_element.get_text(strip=True)), ingredients, steps
+            return link, float(rating_element.get_text(strip=True))
         except ValueError:
-            return link, 0.0, ingredients, steps
-    return link, 0.0, ingredients, steps
+            return link, 0.0
+    return link, 0.0
 
 # Function to extract recipe details from a card
 def extract_recipe_details(card):
@@ -76,21 +32,67 @@ def extract_recipe_details(card):
 
     return title, rating_count, card['href']
 
-# Extract details from all recipe cards
-recipe_details = [extract_recipe_details(card) for card in recipe_cards]
+# Function to check if a category exists
+def category_exists(category, soup):
+    categories = soup.find_all('a', class_='mntl-link-list__link')
+    for cat in categories:
+        if category.lower() in cat.get_text(strip=True).lower():
+            return cat['href']
+    return None
 
-def main():
+# Function to get the ingredient list from a recipe page
+def get_ingredient_list(link):
+    response = requests.get(link)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, 'html.parser')
+    ingredients = []
+    ingredient_elements = soup.find_all('li', class_='mntl-structured-ingredients__list-item')
+    for item in ingredient_elements:
+        quantity = item.find('span', {'data-ingredient-quantity': 'true'}).get_text(strip=True)
+        unit = item.find('span', {'data-ingredient-unit': 'true'}).get_text(strip=True)
+        name = item.find('span', {'data-ingredient-name': 'true'}).get_text(strip=True)
+        ingredients.append(f"{quantity} {unit} {name}")
+    return ingredients
+
+# Main function
+def main(category):
+    # URL of the Allrecipes recipes A-Z page
+    url = 'https://www.allrecipes.com/recipes-a-z-6735880'
+
+    # Send a GET request to the URL
+    response = requests.get(url)
+    response.raise_for_status()  # Check that the request was successful
+
+    # Parse the HTML content using Beautiful Soup
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    # Check if the category exists
+    category_url = category_exists(category, soup)
+    if not category_url:
+        print(f"Error: Category '{category}' not found.")
+        return
+
+    # Fetch the category page
+    response = requests.get(category_url)
+    response.raise_for_status()
+    soup = BeautifulSoup(response.content, 'html.parser')
+
+    # Find all recipe cards
+    recipe_cards = soup.find_all('a', class_='mntl-card-list-items')
+
+    recipes = []
+
+    # Extract details from all recipe cards
+    recipe_details = [extract_recipe_details(card) for card in recipe_cards]
+
     # Use ThreadPoolExecutor to fetch star ratings concurrently
     with ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_recipe = {executor.submit(get_star_rating, card): card for card in recipe_cards}
+        future_to_recipe = {executor.submit(get_star_rating, recipe[2]): recipe for recipe in recipe_details}
 
         for future in as_completed(future_to_recipe):
-            card = future_to_recipe[future]
-            link, star_rating, ingredients, steps = future.result()
-            
-            for recipe in recipe_details:
-                if recipe[2] == link:
-                    recipes.append((recipe[0], recipe[1], star_rating, link, ingredients))
+            recipe = future_to_recipe[future]
+            link, star_rating = future.result()
+            recipes.append((recipe[0], recipe[1], star_rating, link))
 
     # Calculate the average item's rating (C)
     if recipes:
@@ -108,10 +110,25 @@ def main():
     # Calculate the scores and sort the recipes
     sorted_recipes = sorted(recipes, key=lambda x: calculate_weighted_rating(x[2], x[1], C, m), reverse=True)
 
-    # Print the sorted recipes
-    for title, rating_count, star_rating, link, ingredients in sorted_recipes:
-        print(f"Recipe: {title} - Ratings: {rating_count} - Star Rating: {star_rating} \nIngredients:\n{ingredients} \nSteps:\n{steps}")
-    
+    # Print the top 3 sorted recipes
+    print("Top 3 Recipes:")
+    for i, (title, rating_count, star_rating, link) in enumerate(sorted_recipes[:3], start=1):
+        print(f"{i}. Recipe: {title} - Ratings: {rating_count} - Star Rating: {star_rating} - Link: {link}")
+
+    # Prompt the user to select a recipe
+    choice = int(input("Select a recipe (1, 2, or 3): "))
+    if 1 <= choice <= 3:
+        selected_recipe = sorted_recipes[choice - 1]
+        print(f"Fetching ingredients for: {selected_recipe[0]}")
+
+        # Get the ingredient list for the selected recipe
+        ingredients = get_ingredient_list(selected_recipe[3])
+        print("Ingredients:")
+        for ingredient in ingredients:
+            print(f"- {ingredient}")
+    else:
+        print("Invalid choice.")
 
 if __name__ == "__main__":
-    main()
+    input_category = input("Enter the category: ")
+    main(input_category)
