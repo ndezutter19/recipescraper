@@ -32,7 +32,7 @@ def extract_recipe_details(card):
 
     return title, rating_count, card['href']
 
-# Function to check if a category exists
+# Function to check if a category exists and return its URL
 def category_exists(category, soup):
     categories = soup.find_all('a', class_='mntl-link-list__link')
     for cat in categories:
@@ -40,11 +40,14 @@ def category_exists(category, soup):
             return cat['href']
     return None
 
+# Function to list all categories
+def list_all_categories(soup):
+    categories = soup.find_all('a', class_='mntl-link-list__link')
+    for cat in categories:
+        print(cat.get_text(strip=True))
+
 # Function to get the ingredient list from a recipe page
-def get_ingredient_list(link):
-    response = requests.get(link)
-    response.raise_for_status()
-    soup = BeautifulSoup(response.content, 'html.parser')
+def get_ingredient_list(soup):
     ingredients = []
     ingredient_elements = soup.find_all('li', class_='mntl-structured-ingredients__list-item')
     for item in ingredient_elements:
@@ -54,8 +57,17 @@ def get_ingredient_list(link):
         ingredients.append(f"{quantity} {unit} {name}")
     return ingredients
 
+# Function to get the instructions list from a recipe page
+def get_instructions_list(soup):
+    instructions = []
+    instruction_elements = soup.find_all('li', class_='mntl-sc-block')
+    for item in instruction_elements:
+        step = item.get_text(strip=True)
+        instructions.append(step)
+    return instructions
+
 # Main function
-def main(category):
+def main():
     # URL of the Allrecipes recipes A-Z page
     url = 'https://www.allrecipes.com/recipes-a-z-6735880'
 
@@ -66,11 +78,16 @@ def main(category):
     # Parse the HTML content using Beautiful Soup
     soup = BeautifulSoup(response.content, 'html.parser')
 
-    # Check if the category exists
-    category_url = category_exists(category, soup)
-    if not category_url:
-        print(f"Error: Category '{category}' not found.")
-        return
+    while True:
+        category = input("Enter the category (or type 'list categories' to see all categories): ").strip()
+        if category.lower() == 'list categories':
+            list_all_categories(soup)
+            continue
+        category_url = category_exists(category, soup)
+        if category_url:
+            break
+        else:
+            print(f"Error: Category '{category}' not found. Please try again.")
 
     # Fetch the category page
     response = requests.get(category_url)
@@ -119,16 +136,26 @@ def main(category):
     choice = int(input("Select a recipe (1, 2, or 3): "))
     if 1 <= choice <= 3:
         selected_recipe = sorted_recipes[choice - 1]
-        print(f"Fetching ingredients for: {selected_recipe[0]}")
+        print(f"Fetching ingredients and instructions for: {selected_recipe[0]}")
+
+        # Fetch the recipe page
+        response = requests.get(selected_recipe[3])
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
 
         # Get the ingredient list for the selected recipe
-        ingredients = get_ingredient_list(selected_recipe[3])
+        ingredients = get_ingredient_list(soup)
         print("Ingredients:")
         for ingredient in ingredients:
             print(f"- {ingredient}")
+
+        # Get the instructions list for the selected recipe
+        instructions = get_instructions_list(soup)
+        print("Instructions:")
+        for step in instructions:
+            print(f"- {step}")
     else:
         print("Invalid choice.")
 
 if __name__ == "__main__":
-    input_category = input("Enter the category: ")
-    main(input_category)
+    main()
